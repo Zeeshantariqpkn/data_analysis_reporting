@@ -87,13 +87,24 @@ class DataAnalyzer:
     
     def missing_analysis(self):
         """Analyze missing values"""
-        missing_df = pd.DataFrame({
-            'Column': self.df.columns,
-            'Missing Count': self.df.isnull().sum().values,
-            'Missing Percentage': (self.df.isnull().sum() / len(self.df) * 100).values
-        })
-        missing_df = missing_df[missing_df['Missing Count'] > 0].sort_values('Missing Percentage', ascending=False)
-        return missing_df
+        missing_counts = self.df.isnull().sum()
+        missing_percentages = (missing_counts / len(self.df)) * 100
+        
+        # Create DataFrame only if there are missing values
+        missing_data = []
+        for col in self.df.columns:
+            if missing_counts[col] > 0:
+                missing_data.append({
+                    'Column': col,
+                    'Missing Count': int(missing_counts[col]),
+                    'Missing Percentage': float(missing_percentages[col])
+                })
+        
+        if missing_data:
+            missing_df = pd.DataFrame(missing_data)
+            missing_df = missing_df.sort_values('Missing Percentage', ascending=False)
+            return missing_df
+        return pd.DataFrame()  # Return empty DataFrame if no missing values
     
     def correlation_analysis(self):
         """Calculate correlation matrix"""
@@ -358,11 +369,41 @@ def create_download_link(df, filename, file_format):
         href = f'<a href="data:text/html;base64,{b64}" download="{filename}.html">Download {filename}.html</a>'
         return href
 
+def display_data_types(df):
+    """Safely display data types information"""
+    try:
+        # Create lists for each column
+        columns = []
+        data_types = []
+        non_null_counts = []
+        null_counts = []
+        memory_usage = []
+        
+        for col in df.columns:
+            columns.append(col)
+            data_types.append(str(df[col].dtype))
+            non_null_counts.append(int(df[col].count()))
+            null_counts.append(int(df[col].isnull().sum()))
+            memory_usage.append(float(df[col].memory_usage(deep=True) / 1024**2))
+        
+        # Create DataFrame
+        dtype_df = pd.DataFrame({
+            'Column': columns,
+            'Data Type': data_types,
+            'Non-Null Count': non_null_counts,
+            'Null Count': null_counts,
+            'Memory (MB)': memory_usage
+        })
+        
+        return dtype_df
+    except Exception as e:
+        st.error(f"Error displaying data types: {str(e)}")
+        return pd.DataFrame()
+
 def main():
     # Sidebar navigation
     with st.sidebar:
-        st.image("https://img.icons8.com/color/96/000000/data-configuration.png", width=80)
-        st.title("Auto Data Analyzer")
+        st.title("📊 Auto Data Analyzer")
         st.markdown("---")
         
         page = st.radio(
@@ -377,7 +418,7 @@ def main():
             "comprehensive insights, visualizations, and actionable recommendations."
         )
         
-        # Dark/Light mode toggle (bonus feature)
+        # Dark/Light mode toggle
         if st.checkbox("🌙 Dark Mode"):
             st.markdown("""
             <style>
@@ -430,18 +471,11 @@ def main():
                 st.dataframe(df.head(10))
                 
                 st.subheader("🔍 Data Types & Memory Usage")
-                # FIXED: Proper DataFrame creation with same length arrays
-                dtype_data = {
-                    'Column': df.dtypes.index.tolist(),
-                    'Data Type': df.dtypes.values.tolist(),
-                    'Non-Null Count': df.count().values.tolist(),
-                    'Null Count': df.isnull().sum().values.tolist(),
-                    'Memory (MB)': (df.memory_usage(deep=True) / 1024**2).values.tolist()
-                }
-                dtype_df = pd.DataFrame(dtype_data)
-                st.dataframe(dtype_df)
+                dtype_df = display_data_types(df)
+                if not dtype_df.empty:
+                    st.dataframe(dtype_df)
                 
-                # Download cleaned dataset (bonus feature)
+                # Download cleaned dataset
                 st.subheader("💾 Download Cleaned Dataset")
                 col1, col2 = st.columns(2)
                 with col1:
@@ -491,6 +525,8 @@ def main():
                 st.subheader("📊 Statistical Summary")
                 if results['statistics'] is not None:
                     st.dataframe(results['statistics'])
+                else:
+                    st.info("No numeric columns found for statistical summary.")
                 
                 # Outlier detection
                 with st.expander("📈 Outlier Analysis"):
@@ -525,31 +561,35 @@ def main():
                 
                 # Distribution plots
                 st.subheader("📊 Distribution Analysis")
-                col_type = st.radio("Select column type:", ["Numerical", "Categorical"])
                 
-                if col_type == "Numerical" and analyzer.numeric_cols:
-                    selected_col = st.selectbox("Select numerical column:", analyzer.numeric_cols)
-                    col1, col2 = st.columns(2)
+                if len(analyzer.numeric_cols) > 0 or len(analyzer.categorical_cols) > 0:
+                    col_type = st.radio("Select column type:", ["Numerical", "Categorical"])
                     
-                    with col1:
-                        fig = px.histogram(df, x=selected_col, title=f"Distribution of {selected_col}",
-                                          marginal="box", nbins=30)
+                    if col_type == "Numerical" and analyzer.numeric_cols:
+                        selected_col = st.selectbox("Select numerical column:", analyzer.numeric_cols)
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            fig = px.histogram(df, x=selected_col, title=f"Distribution of {selected_col}",
+                                              marginal="box", nbins=30)
+                            st.plotly_chart(fig, use_container_width=True)
+                        
+                        with col2:
+                            fig = px.box(df, y=selected_col, title=f"Box Plot of {selected_col}")
+                            st.plotly_chart(fig, use_container_width=True)
+                    
+                    elif col_type == "Categorical" and analyzer.categorical_cols:
+                        selected_col = st.selectbox("Select categorical column:", analyzer.categorical_cols)
+                        value_counts = df[selected_col].value_counts().head(20)
+                        
+                        fig = px.bar(x=value_counts.index, y=value_counts.values,
+                                    title=f"Top Categories in {selected_col}",
+                                    labels={'x': selected_col, 'y': 'Count'})
                         st.plotly_chart(fig, use_container_width=True)
-                    
-                    with col2:
-                        fig = px.box(df, y=selected_col, title=f"Box Plot of {selected_col}")
-                        st.plotly_chart(fig, use_container_width=True)
-                
-                elif col_type == "Categorical" and analyzer.categorical_cols:
-                    selected_col = st.selectbox("Select categorical column:", analyzer.categorical_cols)
-                    value_counts = df[selected_col].value_counts().head(20)
-                    
-                    fig = px.bar(x=value_counts.index, y=value_counts.values,
-                                title=f"Top Categories in {selected_col}",
-                                labels={'x': selected_col, 'y': 'Count'})
-                    st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning(f"No {col_type.lower()} columns found in the dataset.")
                 else:
-                    st.warning(f"No {col_type.lower()} columns found in the dataset.")
+                    st.warning("No columns available for visualization.")
                 
                 # Pair plot for small datasets
                 if len(df) < 1000 and len(analyzer.numeric_cols) <= 5 and len(analyzer.numeric_cols) > 1:
@@ -565,32 +605,40 @@ def main():
                 
                 # Display insights
                 st.subheader("💭 Key Insights")
-                for insight in results['insights']:
-                    if insight['type'] == 'good':
-                        st.markdown(f'<div class="insight-good">{insight["message"]}</div>', unsafe_allow_html=True)
-                    elif insight['type'] == 'warning':
-                        st.markdown(f'<div class="insight-warning">{insight["message"]}</div>', unsafe_allow_html=True)
-                    elif insight['type'] == 'danger':
-                        st.markdown(f'<div class="insight-danger">{insight["message"]}</div>', unsafe_allow_html=True)
-                    else:
-                        st.info(insight["message"])
+                insights_list = results['insights']
+                if insights_list:
+                    for insight in insights_list:
+                        if insight['type'] == 'good':
+                            st.markdown(f'<div class="insight-good">{insight["message"]}</div>', unsafe_allow_html=True)
+                        elif insight['type'] == 'warning':
+                            st.markdown(f'<div class="insight-warning">{insight["message"]}</div>', unsafe_allow_html=True)
+                        elif insight['type'] == 'danger':
+                            st.markdown(f'<div class="insight-danger">{insight["message"]}</div>', unsafe_allow_html=True)
+                        else:
+                            st.info(insight["message"])
+                else:
+                    st.info("No insights generated. Try uploading a different dataset.")
                 
                 # Display recommendations
                 st.subheader("🎯 Actionable Recommendations")
-                for rec in results['recommendations']:
-                    with st.container():
-                        col1, col2 = st.columns([1, 3])
-                        with col1:
-                            if rec['priority'] == 'High':
-                                st.error(f"⚠️ {rec['priority']} Priority")
-                            elif rec['priority'] == 'Medium':
-                                st.warning(f"📌 {rec['priority']} Priority")
-                            else:
-                                st.info(f"💡 {rec['priority']} Priority")
-                        with col2:
-                            st.markdown(f"**{rec['action']}**")
-                            st.caption(rec['description'])
-                        st.markdown("---")
+                recommendations_list = results['recommendations']
+                if recommendations_list:
+                    for rec in recommendations_list:
+                        with st.container():
+                            col1, col2 = st.columns([1, 3])
+                            with col1:
+                                if rec['priority'] == 'High':
+                                    st.error(f"⚠️ {rec['priority']} Priority")
+                                elif rec['priority'] == 'Medium':
+                                    st.warning(f"📌 {rec['priority']} Priority")
+                                else:
+                                    st.info(f"💡 {rec['priority']} Priority")
+                            with col2:
+                                st.markdown(f"**{rec['action']}**")
+                                st.caption(rec['description'])
+                            st.markdown("---")
+                else:
+                    st.info("No recommendations generated. Your dataset looks good!")
             
             elif page == "📄 Report Generator":
                 st.header("Generate Comprehensive Report")
@@ -609,8 +657,12 @@ def main():
                 
                 # Key findings
                 st.subheader("🔑 Key Findings")
-                for insight in results['insights'][:5]:  # Top 5 insights
-                    st.markdown(f"- {insight['message']}")
+                insights_list = results['insights']
+                if insights_list:
+                    for insight in insights_list[:5]:  # Top 5 insights
+                        st.markdown(f"- {insight['message']}")
+                else:
+                    st.info("No key findings to display.")
                 
                 # Report download options
                 st.subheader("📥 Download Report")
@@ -644,15 +696,18 @@ def main():
         st.info("👈 Please upload a CSV or Excel file to get started!")
         
         # Example datasets
-        with st.expander("📚 Try with example datasets"):
+        with st.expander("📚 Sample Datasets to Test"):
             st.markdown("""
-            - **Customer Sales Dataset**: Customer purchasing behavior
-            - **Employee Performance Data**: HR analytics
-            - **House Prices Dataset**: Real estate analysis
-            - **Medical Patient Data**: Healthcare analytics
-            - **Product Sales Data**: E-commerce with anomalies
+            ### Available Test Datasets:
             
-            Upload your own data or download the sample datasets provided above to test the tool!
+            1. **Customer Sales Dataset** - Customer purchasing behavior with missing values
+            2. **Employee Performance Data** - HR analytics with attrition patterns
+            3. **House Prices Dataset** - Real estate analysis with strong correlations
+            4. **Medical Patient Data** - Healthcare analytics with health metrics
+            5. **Product Sales Data** - E-commerce data with anomalies
+            
+            ### How to get these datasets:
+            Copy the CSV data from the previous message and save as `.csv` files, then upload them here!
             """)
 
 if __name__ == "__main__":
