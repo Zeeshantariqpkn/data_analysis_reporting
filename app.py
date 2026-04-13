@@ -204,21 +204,22 @@ class DataAnalyzer:
         # Correlation insights
         if len(self.numeric_cols) > 1:
             corr_matrix = self.correlation_analysis()
-            strong_corrs = []
-            for i in range(len(corr_matrix.columns)):
-                for j in range(i+1, len(corr_matrix.columns)):
-                    corr_value = corr_matrix.iloc[i, j]
-                    if abs(corr_value) > 0.7:
-                        strong_corrs.append((corr_matrix.columns[i], corr_matrix.columns[j], corr_value))
-            
-            if strong_corrs:
-                for col1, col2, corr in strong_corrs[:3]:
-                    direction = "positive" if corr > 0 else "negative"
-                    insights.append({
-                        'type': 'good' if abs(corr) < 0.9 else 'warning',
-                        'message': f"🔗 Strong {direction} correlation ({corr:.2f}) between '{col1}' and '{col2}'.",
-                        'category': 'correlations'
-                    })
+            if corr_matrix is not None:
+                strong_corrs = []
+                for i in range(len(corr_matrix.columns)):
+                    for j in range(i+1, len(corr_matrix.columns)):
+                        corr_value = corr_matrix.iloc[i, j]
+                        if abs(corr_value) > 0.7:
+                            strong_corrs.append((corr_matrix.columns[i], corr_matrix.columns[j], corr_value))
+                
+                if strong_corrs:
+                    for col1, col2, corr in strong_corrs[:3]:
+                        direction = "positive" if corr > 0 else "negative"
+                        insights.append({
+                            'type': 'good' if abs(corr) < 0.9 else 'warning',
+                            'message': f"🔗 Strong {direction} correlation ({corr:.2f}) between '{col1}' and '{col2}'.",
+                            'category': 'correlations'
+                        })
         
         # Outlier insights
         outliers = self.detect_outliers()
@@ -276,16 +277,17 @@ class DataAnalyzer:
         # Correlation recommendations
         if len(self.numeric_cols) > 1:
             corr_matrix = self.correlation_analysis()
-            for i in range(len(corr_matrix.columns)):
-                for j in range(i+1, len(corr_matrix.columns)):
-                    if abs(corr_matrix.iloc[i, j]) > 0.85:
-                        recommendations.append({
-                            'action': 'Check multicollinearity',
-                            'description': f"'{corr_matrix.columns[i]}' and '{corr_matrix.columns[j]}' are highly correlated (r={corr_matrix.iloc[i, j]:.2f}). Consider using one for modeling.",
-                            'priority': 'Medium'
-                        })
-                        break
-                break
+            if corr_matrix is not None:
+                for i in range(len(corr_matrix.columns)):
+                    for j in range(i+1, len(corr_matrix.columns)):
+                        if abs(corr_matrix.iloc[i, j]) > 0.85:
+                            recommendations.append({
+                                'action': 'Check multicollinearity',
+                                'description': f"'{corr_matrix.columns[i]}' and '{corr_matrix.columns[j]}' are highly correlated (r={corr_matrix.iloc[i, j]:.2f}). Consider using one for modeling.",
+                                'priority': 'Medium'
+                            })
+                            break
+                    break
         
         # General recommendations
         if len(self.numeric_cols) > 0 and len(self.categorical_cols) > 0:
@@ -305,12 +307,16 @@ class DataAnalyzer:
 
 def load_data(uploaded_file):
     """Load data from uploaded file"""
-    if uploaded_file.name.endswith('.csv'):
-        return pd.read_csv(uploaded_file)
-    elif uploaded_file.name.endswith(('.xlsx', '.xls')):
-        return pd.read_excel(uploaded_file)
-    else:
-        st.error("Unsupported file format!")
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            return pd.read_csv(uploaded_file)
+        elif uploaded_file.name.endswith(('.xlsx', '.xls')):
+            return pd.read_excel(uploaded_file)
+        else:
+            st.error("Unsupported file format!")
+            return None
+    except Exception as e:
+        st.error(f"Error loading file: {str(e)}")
         return None
 
 def create_download_link(df, filename, file_format):
@@ -424,13 +430,15 @@ def main():
                 st.dataframe(df.head(10))
                 
                 st.subheader("🔍 Data Types & Memory Usage")
-                dtype_df = pd.DataFrame({
-                    'Column': df.dtypes.index,
-                    'Data Type': df.dtypes.values,
-                    'Non-Null Count': df.count().values,
-                    'Null Count': df.isnull().sum().values,
-                    'Memory (MB)': (df.memory_usage(deep=True) / 1024**2).values
-                })
+                # FIXED: Proper DataFrame creation with same length arrays
+                dtype_data = {
+                    'Column': df.dtypes.index.tolist(),
+                    'Data Type': df.dtypes.values.tolist(),
+                    'Non-Null Count': df.count().values.tolist(),
+                    'Null Count': df.isnull().sum().values.tolist(),
+                    'Memory (MB)': (df.memory_usage(deep=True) / 1024**2).values.tolist()
+                }
+                dtype_df = pd.DataFrame(dtype_data)
                 st.dataframe(dtype_df)
                 
                 # Download cleaned dataset (bonus feature)
@@ -512,6 +520,8 @@ def main():
                                    color_continuous_scale='RdBu_r',
                                    title="Feature Correlations")
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Not enough numeric columns for correlation analysis (need at least 2).")
                 
                 # Distribution plots
                 st.subheader("📊 Distribution Analysis")
@@ -538,6 +548,8 @@ def main():
                                 title=f"Top Categories in {selected_col}",
                                 labels={'x': selected_col, 'y': 'Count'})
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning(f"No {col_type.lower()} columns found in the dataset.")
                 
                 # Pair plot for small datasets
                 if len(df) < 1000 and len(analyzer.numeric_cols) <= 5 and len(analyzer.numeric_cols) > 1:
@@ -634,11 +646,13 @@ def main():
         # Example datasets
         with st.expander("📚 Try with example datasets"):
             st.markdown("""
-            - **Iris Dataset**: Classic flower classification dataset
-            - **Titanic Dataset**: Passenger survival data
-            - **Sales Dataset**: E-commerce transaction data
+            - **Customer Sales Dataset**: Customer purchasing behavior
+            - **Employee Performance Data**: HR analytics
+            - **House Prices Dataset**: Real estate analysis
+            - **Medical Patient Data**: Healthcare analytics
+            - **Product Sales Data**: E-commerce with anomalies
             
-            Upload your own data or use these examples to test the tool!
+            Upload your own data or download the sample datasets provided above to test the tool!
             """)
 
 if __name__ == "__main__":
